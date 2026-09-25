@@ -1,0 +1,15 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: aws-load-balancer-controller
+  namespace: argocd
+spec:
+  source:
+    helm:
+      valuesObject:
+        clusterName: "PATCH_ME"
+        region: "PATCH_ME"
+        vpcId: "PATCH_ME"
+        serviceAccount:
+          annotations:
+            eks.amazonaws.com/role-arn: "PATCH_ME"

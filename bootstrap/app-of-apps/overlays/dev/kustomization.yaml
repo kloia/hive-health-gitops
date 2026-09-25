@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: argocd
+resources:
+  - ../../base/
+
+commonAnnotations:
+  gitops.hive/overlay-path: "overlays/dev"
+
+# Replaces the PATCH_ME segment (index 2) of every Application's spec.source.path
+# with this overlay's path, e.g. components/argocd/PATCH_ME -> components/argocd/overlays/dev
+replacements:
+  - source:
+      group: argoproj.io
+      version: v1alpha1
+      kind: Application
+      name: bootstrap
+      namespace: argocd
+      fieldPath: "metadata.annotations.[gitops.hive/overlay-path]"
+    targets:
+      - select:
+          group: argoproj.io
+          version: v1alpha1
+          kind: Application
+        fieldPaths:
+          - "spec.source.path"
+        options:
+          delimiter: "/"
+          index: 2

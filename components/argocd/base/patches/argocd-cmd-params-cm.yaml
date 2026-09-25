@@ -1,0 +1,7 @@
+# TLS is terminated at the ALB, argocd-server serves plain HTTP behind it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+data:
+  server.insecure: "true"

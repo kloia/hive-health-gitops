@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: argocd
+resources:
+  - https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.3/manifests/install.yaml
+  - patches/argocd-pdbs.yaml
+
+patches:
+  - path: patches/argocd-cm.yaml
+  - path: patches/argocd-cmd-params-cm.yaml
+  - path: patches/argocd-repo-server-resources.yaml
+  - path: patches/argocd-server-resources.yaml

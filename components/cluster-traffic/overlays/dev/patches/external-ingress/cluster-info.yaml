@@ -1,0 +1,7 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    alb.ingress.kubernetes.io/load-balancer-name: hive-dev-traffic
+  name: external-ingress
+  namespace: mock-app
