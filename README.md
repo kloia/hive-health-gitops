@@ -10,8 +10,7 @@ GitOps repository for the Hive EKS cluster, managed by ArgoCD using the app-of-a
   - [4. Fill in the environment values](#4-fill-in-the-environment-values)
   - [5. Push to Git](#5-push-to-git)
   - [6. Bootstrap the cluster](#6-bootstrap-the-cluster)
-  - [7. DNS](#7-dns)
-  - [8. Log in to ArgoCD](#8-log-in-to-argocd)
+  - [7. Log in to ArgoCD](#7-log-in-to-argocd)
 - [Day-2 changes](#day-2-changes)
 - [Troubleshooting](#troubleshooting)
 - [Teardown](#teardown)
@@ -27,7 +26,7 @@ bootstrap/
     overlays/<env>/     # sets spec.source.path of every root app to overlays/<env>
 components/
   namespaces/           # namespaces needed before ArgoCD exists
-  argocd/               # ArgoCD install (upstream manifest + patches), ALB ingress per env
+  argocd/               # ArgoCD install (upstream manifest + patches)
   cluster-core/         # core add-ons as ArgoCD Applications (AWS Load Balancer Controller)
   cluster-traffic/      # external (internet-facing) ALB routing to the workload service
 ```
@@ -45,15 +44,15 @@ The `bootstrap` app points at its own directory, so ArgoCD manages the root apps
 Every root app's path ends in `PATCH_ME` in `base/`; the overlay's `replacements`
 swaps that segment for the `gitops.hive/overlay-path` annotation.
 
-Two internet-facing ALBs are created:
+One internet-facing ALB is created by `cluster-traffic`:
 
-| ALB                 | Group      | Listeners                    | Routes to                     |
-|---------------------|------------|------------------------------|-------------------------------|
-| `hive-dev-external` | `external` | HTTP 80 → HTTPS 443 (ACM)    | ArgoCD, by host               |
-| `hive-dev-traffic`  | `traffic`  | HTTP 8080, no TLS, no host   | `mock-app/mock-service:80`    |
+| ALB                | Group     | Listener                   | Routes to                  |
+|--------------------|-----------|----------------------------|----------------------------|
+| `hive-dev-traffic` | `traffic` | HTTP 8080, no TLS, no host | `mock-app/mock-service:80` |
 
-They are kept apart on purpose. `ssl-redirect` is exclusive per ALB group, so if the
-traffic ingress joined the `external` group, its 8080 listener would be redirected to 443 as well.
+ArgoCD is not exposed through an ALB. Reach it with `kubectl port-forward` (step 7).
+If ArgoCD is exposed later with TLS, give its ingress a separate ALB group: `ssl-redirect`
+is exclusive per group, so sharing `traffic` would redirect the 8080 listener to HTTPS as well.
 
 ## Installation
 
@@ -73,7 +72,7 @@ export VPC_ID=$(aws eks describe-cluster --name $CLUSTER_NAME --region $AWS_REGI
 
 | Tool      | Used for                                         |
 |-----------|--------------------------------------------------|
-| `aws`     | IAM, ACM, subnet tags, kubeconfig                |
+| `aws`     | IAM, subnet tags, kubeconfig                     |
 | `eksctl`  | OIDC provider and IRSA role (optional, see 3.2)  |
 | `kubectl` | bootstrap (`kubectl apply -k` bundles kustomize) |
 | `argocd`  | CLI access (optional)                            |
@@ -137,22 +136,6 @@ aws ec2 create-tags --resources <public-subnet-a> <public-subnet-b> \
 
 For internal ALBs later, tag the private subnets with `kubernetes.io/role/internal-elb=1`.
 
-#### 3.4 ACM certificate
-
-The certificate is only needed for the ArgoCD host. The traffic ALB serves plain HTTP. A wildcard is the simplest:
-
-```sh
-aws acm request-certificate --region $AWS_REGION \
-  --domain-name "*.<your-domain>" --validation-method DNS
-```
-
-Create the DNS validation record it asks for, then wait until the status is `ISSUED`:
-
-```sh
-aws acm describe-certificate --region $AWS_REGION --certificate-arn <arn> \
-  --query Certificate.Status
-```
-
 ### 4. Fill in the environment values
 
 | File | Field | Value |
@@ -160,7 +143,6 @@ aws acm describe-certificate --region $AWS_REGION --certificate-arn <arn> \
 | `bootstrap/app-of-apps/base/*.yaml` | `repoURL` | Git URL of this repo (replace `REPLACE_ME`) |
 | `components/cluster-core/overlays/dev/patches/aws-load-balancer-controller/cluster-info.yaml` | `clusterName`, `region`, `vpcId` | `$CLUSTER_NAME`, `$AWS_REGION`, `$VPC_ID` |
 | same file | `eks.amazonaws.com/role-arn` | role ARN from 3.2 |
-| `components/argocd/overlays/dev/ingress.yaml` | `certificate-arn`, `host` | ACM ARN from 3.4, e.g. `argocd.<your-domain>` |
 | `components/cluster-traffic/overlays/dev/patches/external-ingress/cluster-info.yaml` | `load-balancer-name` | already `hive-dev-traffic`, change only if needed |
 
 `cluster-traffic` sends traffic to a placeholder backend: service `mock-service`, port 80,
@@ -263,46 +245,35 @@ cluster-core                   Synced        Healthy
 cluster-traffic                Synced        Healthy
 ```
 
-Check the ALBs:
+Check the ALB:
 
 ```sh
-kubectl get ingress -A        # ADDRESS column shows the ALB DNS names
-aws elbv2 describe-load-balancers --region $AWS_REGION --names hive-dev-external hive-dev-traffic \
-  --query 'LoadBalancers[].[LoadBalancerName,DNSName,State.Code]' --output table
+kubectl -n mock-app get ingress external-ingress   # ADDRESS column shows the ALB DNS name
+aws elbv2 describe-load-balancers --region $AWS_REGION --names hive-dev-traffic \
+  --query 'LoadBalancers[0].[DNSName,State.Code]' --output text
 ```
 
-The ALBs take 2–3 minutes to reach the `active` state. Then test the traffic ALB:
+The ALB takes 2–3 minutes to reach the `active` state. Then test it:
 
 ```sh
 curl -i http://<hive-dev-traffic-dns>:8080/   # 503 until mock-service has endpoints
 ```
 
-### 7. DNS
-
-Point the ArgoCD host at the `hive-dev-external` DNS name from step 6.4. In Route 53, use an
-alias A record; elsewhere, use a CNAME:
-
-| Record                 | Target                     |
-|------------------------|----------------------------|
-| `argocd.<your-domain>` | `<hive-dev-external-dns>`  |
-
-The traffic ALB needs no DNS record: it answers every host. Add a record pointing at
-`<hive-dev-traffic-dns>` only if you want a friendly name (`http://<name>:8080`).
-
-### 8. Log in to ArgoCD
+### 7. Log in to ArgoCD
 
 ```sh
 kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo
+kubectl -n argocd port-forward svc/argocd-server 8080:80
 ```
 
-Open `https://argocd.<your-domain>` and log in as `admin`. Before DNS is ready you can use
-`kubectl -n argocd port-forward svc/argocd-server 8080:80` and open `http://localhost:8080`.
+Open `http://localhost:8080` and log in as `admin`. argocd-server runs with `server.insecure: "true"`,
+so the port-forward serves plain HTTP.
 
-The ALB only forwards HTTP/1.1, so the CLI needs `--grpc-web`:
+CLI (it opens its own port-forward):
 
 ```sh
-argocd login argocd.<your-domain> --grpc-web --username admin
-argocd account update-password
+argocd login --port-forward --port-forward-namespace argocd --plaintext --username admin
+argocd account update-password --port-forward --port-forward-namespace argocd --plaintext
 kubectl -n argocd delete secret argocd-initial-admin-secret
 ```
 
@@ -320,30 +291,27 @@ After bootstrapping, change the cluster only through Git. The root apps run with
 | Symptom | Likely cause / check |
 |---------|----------------------|
 | Ingress has no ADDRESS | `kubectl -n kube-system logs deploy/aws-load-balancer-controller`. Usually missing subnet tags (3.3), a wrong role ARN, or an OIDC provider that is not associated (3.1). |
-| `failed calling webhook "vingress.elbv2.k8s.aws"` | The controller is not ready yet. The `cluster-traffic` and `argocd` apps retry automatically. Wait, or run `argocd app sync <app>`. |
+| `failed calling webhook "vingress.elbv2.k8s.aws"` | The controller is not ready yet. The `cluster-traffic` app retries automatically. Wait, or run `argocd app sync cluster-traffic`. |
 | `AccessDenied` in controller logs | The IAM policy is outdated for the controller version. Re-download it with the matching tag (3.2). |
 | Traffic ALB returns 503 on 8080 | The backend service (`mock-service`) has no ready endpoints. This is expected until the real service is deployed. |
 | Traffic ALB times out on 8080 | Check that the ALB security group allows 8080 inbound. The controller opens it to `0.0.0.0/0` by default; `alb.ingress.kubernetes.io/inbound-cidrs` narrows it. |
-| ALB target unhealthy for ArgoCD | Check that `server.insecure: "true"` is set in `argocd-cmd-params-cm`. If you changed it after install, run `kubectl -n argocd rollout restart deploy/argocd-server`. |
 | Root apps stuck on `repository not found` / `authentication required` | `repoURL` is wrong, or the private repo secret (step 5) is missing. |
 | `no matches for kind "Application"` in 6.3 | The ArgoCD CRDs are not established yet. Re-run the `kubectl wait` from 6.2. |
 
 ## Teardown
 
-Delete the ALBs before deleting the cluster. Otherwise the ALBs and their security groups are
+Delete the ALB before deleting the cluster. Otherwise the ALB and its security groups are
 left behind and block VPC deletion.
 
 ```sh
-# stop ArgoCD from recreating the ingresses
+# stop ArgoCD from recreating the ingress
 kubectl -n argocd scale statefulset argocd-application-controller --replicas=0
 kubectl delete ingress -n mock-app external-ingress
-kubectl delete ingress -n argocd argocd-server
-# wait until both return LoadBalancerNotFound
-aws elbv2 describe-load-balancers --region $AWS_REGION --names hive-dev-external
+# wait until this returns LoadBalancerNotFound
 aws elbv2 describe-load-balancers --region $AWS_REGION --names hive-dev-traffic
 ```
 
-Then delete the cluster, the IAM role and policy from 3.2, and the DNS records.
+Then delete the cluster and the IAM role and policy from 3.2.
 
 ## Adding a new environment
 
@@ -355,5 +323,5 @@ Then delete the cluster, the IAM role and policy from 3.2, and the DNS records.
    - `components/cluster-traffic/overlays/dev`
 2. Set `gitops.hive/overlay-path` in the new app-of-apps overlay to `overlays/<env>`.
 3. Point `bootstrap/initial/<env>/*` at the new overlays.
-4. Give both ALBs env-specific names: `load-balancer-name` in `components/argocd/overlays/<env>/ingress.yaml` and in the cluster-traffic overlay patch. ALB names are unique per account and region.
+4. Set an env-specific `load-balancer-name` in the cluster-traffic overlay patch. ALB names are unique per account and region.
 5. Follow [Installation](#installation) against the new cluster.

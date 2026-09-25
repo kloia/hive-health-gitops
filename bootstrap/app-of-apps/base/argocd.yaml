@@ -10,7 +10,7 @@ spec:
     namespace: argocd
     server: "https://kubernetes.default.svc"
   source:
-    repoURL: "https://github.com/REPLACE_ME/hive-gitops"
+    repoURL: "https://github.com/kloia/hive-health-gitops"
     targetRevision: "HEAD"
     path: "components/argocd/PATCH_ME"
   project: default
