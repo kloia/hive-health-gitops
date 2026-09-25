@@ -3,3 +3,4 @@ kind: Kustomization
 
 resources:
   - aws-load-balancer-controller.yaml
+  - instana-agent.yaml
