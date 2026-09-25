@@ -1,4 +1,7 @@
+# The hive Helm release also lives here; never let ArgoCD prune or delete this namespace.
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: mock-app
+  name: hive
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false

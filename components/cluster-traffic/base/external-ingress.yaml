@@ -2,14 +2,15 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   annotations:
-    # Own group/ALB: ssl-redirect is exclusive per group, sharing the ArgoCD ALB would redirect 8080 to 443
+    # Own group/ALB: ssl-redirect is exclusive per group, sharing an HTTPS ALB would redirect 8080 to 443
     alb.ingress.kubernetes.io/group.name: traffic
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 8080}]'
     alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/healthcheck-path: /health
     alb.ingress.kubernetes.io/load-balancer-name: "PATCH_ME"
   name: external-ingress
-  namespace: mock-app
+  namespace: hive
 spec:
   ingressClassName: alb
   rules:
@@ -17,7 +18,7 @@ spec:
         paths:
           - backend:
               service:
-                name: mock-service
+                name: hive
                 port:
                   number: 80
             path: /

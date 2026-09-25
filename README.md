@@ -48,7 +48,7 @@ One internet-facing ALB is created by `cluster-traffic`:
 
 | ALB                | Group     | Listener                   | Routes to                  |
 |--------------------|-----------|----------------------------|----------------------------|
-| `hive-dev-traffic` | `traffic` | HTTP 8080, no TLS, no host | `mock-app/mock-service:80` |
+| `hive-dev-traffic` | `traffic` | HTTP 8080, no TLS, no host | `hive/hive:80`              |
 
 ArgoCD is not exposed through an ALB. Reach it with `kubectl port-forward` (step 7).
 If ArgoCD is exposed later with TLS, give its ingress a separate ALB group: `ssl-redirect`
@@ -145,9 +145,11 @@ For internal ALBs later, tag the private subnets with `kubernetes.io/role/intern
 | same file | `eks.amazonaws.com/role-arn` | role ARN from 3.2 |
 | `components/cluster-traffic/overlays/dev/patches/external-ingress/cluster-info.yaml` | `load-balancer-name` | already `hive-dev-traffic`, change only if needed |
 
-`cluster-traffic` sends traffic to a placeholder backend: service `mock-service`, port 80,
-namespace `mock-app`. Change these to the real service when it exists. Until then the ALB
-returns 503. The ALB listens on 8080 over plain HTTP with no host rule, so every request
+`cluster-traffic` sends traffic to service `hive` (port 80) in namespace `hive`. That service
+is created by the Helm chart in the `hive-app` repo, release name `hive`. Deploy the chart into
+the `hive` namespace (`make deploy ... NAMESPACE=hive`), because the Makefile defaults to
+`hive-<env>`. Until the service exists the ALB returns 503. The ALB health check calls
+`/health`, the same path as the pod's readiness probe. The ALB listens on 8080 over plain HTTP with no host rule, so every request
 on that port goes to the service.
 
 Check that nothing is left and that everything renders:
@@ -248,7 +250,7 @@ cluster-traffic                Synced        Healthy
 Check the ALB:
 
 ```sh
-kubectl -n mock-app get ingress external-ingress   # ADDRESS column shows the ALB DNS name
+kubectl -n hive get ingress external-ingress   # ADDRESS column shows the ALB DNS name
 aws elbv2 describe-load-balancers --region $AWS_REGION --names hive-dev-traffic \
   --query 'LoadBalancers[0].[DNSName,State.Code]' --output text
 ```
@@ -256,7 +258,7 @@ aws elbv2 describe-load-balancers --region $AWS_REGION --names hive-dev-traffic 
 The ALB takes 2–3 minutes to reach the `active` state. Then test it:
 
 ```sh
-curl -i http://<hive-dev-traffic-dns>:8080/   # 503 until mock-service has endpoints
+curl -i http://<hive-dev-traffic-dns>:8080/   # 503 until the hive service has ready pods
 ```
 
 ### 7. Log in to ArgoCD
@@ -293,7 +295,7 @@ After bootstrapping, change the cluster only through Git. The root apps run with
 | Ingress has no ADDRESS | `kubectl -n kube-system logs deploy/aws-load-balancer-controller`. Usually missing subnet tags (3.3), a wrong role ARN, or an OIDC provider that is not associated (3.1). |
 | `failed calling webhook "vingress.elbv2.k8s.aws"` | The controller is not ready yet. The `cluster-traffic` app retries automatically. Wait, or run `argocd app sync cluster-traffic`. |
 | `AccessDenied` in controller logs | The IAM policy is outdated for the controller version. Re-download it with the matching tag (3.2). |
-| Traffic ALB returns 503 on 8080 | The backend service (`mock-service`) has no ready endpoints. This is expected until the real service is deployed. |
+| Traffic ALB returns 503 on 8080 | Service `hive/hive` has no ready endpoints: the chart is not deployed to `hive`, or `/health` fails (it pings the database). Check `kubectl -n hive get endpoints hive`. |
 | Traffic ALB times out on 8080 | Check that the ALB security group allows 8080 inbound. The controller opens it to `0.0.0.0/0` by default; `alb.ingress.kubernetes.io/inbound-cidrs` narrows it. |
 | Root apps stuck on `repository not found` / `authentication required` | `repoURL` is wrong, or the private repo secret (step 5) is missing. |
 | `no matches for kind "Application"` in 6.3 | The ArgoCD CRDs are not established yet. Re-run the `kubectl wait` from 6.2. |
@@ -306,7 +308,7 @@ left behind and block VPC deletion.
 ```sh
 # stop ArgoCD from recreating the ingress
 kubectl -n argocd scale statefulset argocd-application-controller --replicas=0
-kubectl delete ingress -n mock-app external-ingress
+kubectl delete ingress -n hive external-ingress
 # wait until this returns LoadBalancerNotFound
 aws elbv2 describe-load-balancers --region $AWS_REGION --names hive-dev-traffic
 ```
