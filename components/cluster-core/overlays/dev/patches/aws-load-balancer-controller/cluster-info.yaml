@@ -7,9 +7,9 @@ spec:
   source:
     helm:
       valuesObject:
-        clusterName: "PATCH_ME"
-        region: "PATCH_ME"
-        vpcId: "PATCH_ME"
+        clusterName: "health-hackathon"
+        region: "eu-west-2"
+        vpcId: "vpc-0d2f30d2aac2746ef"
         serviceAccount:
           annotations:
-            eks.amazonaws.com/role-arn: "PATCH_ME"
+            eks.amazonaws.com/role-arn: "arn:aws:iam::417732881703:role/health-hackathon-aws-lb-controller"
