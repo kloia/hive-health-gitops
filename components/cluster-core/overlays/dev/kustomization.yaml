@@ -6,4 +6,3 @@ resources:
 
 patches:
   - path: patches/aws-load-balancer-controller/cluster-info.yaml
-  - path: patches/instana-agent/cluster-info.yaml
